@@ -1,0 +1,17 @@
+# Video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.flv
+*.wmv
+*.wav
+
+# Subtitle files
+*.srt
+*.sub
+*.ass
+*.vtt
+
+# python cache
+*.pyc
