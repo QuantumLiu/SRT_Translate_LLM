@@ -3,9 +3,34 @@ from typing import List, Optional
 
 @dataclass
 class SubtitleBlock:
-    index: int
-    timeline: str
-    text: str
+    '''
+    字幕块
+    Sample:
+    1
+    00:00:06,460 --> 00:00:07,980
+    你做了什么？
+    What did you do?
+    '''
+    def __init__(self, index:int, timeline:str, text:str):
+        self.index = index
+        self.timeline = timeline
+        self.text = text
+        self.start = None
+        self.end = None
+        self.duration = None
+
+    def calc_duration(self) -> float:
+        start, end = self.timeline.split(" --> ")
+        start = start.split(":")
+        end = end.split(":")
+        self.start = int(start[0])*3600 + int(start[1])*60 + float(start[2].replace(",","."))
+        self.end = int(end[0])*3600 + int(end[1])*60 + float(end[2].replace(",","."))
+        self.duration = self.end - self.start
+
+def format_timeline(start: float,end:float) -> str:
+    start_str = f"{int(start//3600):02d}:{int((start%3600)//60):02d}:{start%60:.3f}".replace(".",",")
+    end_str = f"{int(end//3600):02d}:{int((end%3600)//60):02d}:{end%60:.3f}".replace(".",",")
+    return f"{start_str} --> {end_str}"
 
 def parse_srt(file_path: str) -> List[SubtitleBlock]:
     """SRT文件解析器"""
@@ -27,6 +52,31 @@ def parse_srt(file_path: str) -> List[SubtitleBlock]:
         if current_block and current_block.text:  # 处理最后未完结块[^3]
             blocks.append(current_block)
     return blocks
+
+# 拆分过长的字幕block为两段，按照标点或空格分词拆分
+def split_long_subtitle_blocks(blocks: List[SubtitleBlock], max_length: int = 15) -> List[SubtitleBlock]:
+    new_blocks = []
+    index=1
+    for block in blocks:
+        # count the number of words
+        words = block.text.split()
+        if len(words) <= max_length:
+            new_blocks.append(SubtitleBlock(index=index, timeline=block.timeline, text=block.text))
+            index += 1
+            continue
+        # split the block
+        n_blocks= len(words) // max_length
+        if len(words) % max_length != 0:
+            n_blocks += 1
+        target_length = len(words) // n_blocks
+        block.calc_duration()
+        duration = block.duration
+        for i in range(n_blocks):
+            new_text = " ".join(words[i*target_length:(i+1)*target_length])
+            new_timeline = format_timeline(block.start + i*duration/n_blocks, block.start + (i+1)*duration/n_blocks)
+            new_blocks.append(SubtitleBlock(index=index, timeline=new_timeline, text=new_text))
+            index += 1
+    return new_blocks
 
 def save_srt(file_path: str, blocks: List[SubtitleBlock]):
     """SRT文件保存器"""
@@ -65,4 +115,5 @@ def get_context_window(blocks: List[SubtitleBlock], current_index: int, window_s
     end = min(len(blocks), current_index + window_size + 1)
     return " | ".join([block.text for block in blocks[start:end]])
 
-CMD_FFMPEG_MERGE_TEMPLATE = "ffmpeg -hwaccel cuda -c:v h264_cuvid -i {input_path_video} -vf subtitles={input_path_srt} -c:v h264_nvenc  -b:v 8000k -c:a copy  {output_path_video} -y"
+CMD_FFMPEG_MERGE_TEMPLATE = '''ffmpeg -hwaccel cuda -c:v h264_cuvid -i "{input_path_video}" -vf subtitles="{input_path_srt}" -c:v h264_nvenc  -b:v 8000k -c:a copy "{output_path_video}" -y'''
+CMD_FFMPEG_SPLIT_TEMPLATE = '''ffmpeg -i "{input_path_video}" -c:v copy -c:a copy -f segment -segment_time 290 -reset_timestamps 1 {output_dir}split_%03d.mp4'''

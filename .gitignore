@@ -6,6 +6,7 @@
 *.flv
 *.wmv
 *.wav
+*.jpg
 
 # Subtitle files
 *.srt

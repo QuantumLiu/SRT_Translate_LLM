@@ -5,11 +5,7 @@ from typing import List, Optional
 import requests
 
 from tqdm import tqdm
-@dataclass
-class SubtitleBlock:
-    index: int
-    timeline: str
-    text: str
+from subtitle import SubtitleBlock, parse_srt,save_srt,split_long_subtitle_blocks,merge_subtitles,CMD_FFMPEG_MERGE_TEMPLATE, CMD_FFMPEG_SPLIT_TEMPLATE
 
 @dataclass
 class ModelConfigOpenAI:
@@ -80,18 +76,18 @@ def translate_block_openai(
     system_prompt = (
         f"你是一个资深的{domain or '通用'}领域的字幕翻译专家，严格遵守以下规则：\n"
         "1. 仅输出简体中文译文\n"
-        "2. 自动校正拼写错误但保留技术术语\n"
-        "3. 确保译文符合正确的语言习惯\n"
-        "4. 保持原始文本的风格和语气\n"
-        "5. 专业技术词汇请保留原文或参考当前领域知识进行翻译\n"
+        "2. 根据上下文参考给出最符合语境的翻译\n"
+        "3. 确保译文语序和表述符合中文正确的语言习惯\n"
+        "4. 自动校正原文中可能存在的的拼写错误\n"
+        "5. 猜想并保持原始文本的风格和语气\n"
+        "6. 专业技术词汇请参考当前领域知识进行翻译\n"
         f"当前领域：{domain or '通用领域'}"
+        "请严格按要求直接输出中文译文（不要添加任何解释或符号）"
     )
     
     user_prompt = (
         f"上下文参考：\n{context}\n"
-        f"需要翻译的内容：{block.text}\n"
-        "请严格按要求输出译文（不要添加任何解释或符号）:"
-    )
+        f"需要翻译的内容：{block.text}\n")
     
     payload = {
         "model": config.model_id,  # 必填参数[^1]
@@ -133,7 +129,7 @@ def translate_block_openai(
             print(f"Error translating block {block.index}: {str(e)}")
             if i < max_retries - 1:
                 print("Retrying...")
-                time.sleep(30)
+                time.sleep(2)
             else:
                 return block.text + " [TRANSLATION_FAILED]"
 
@@ -223,7 +219,7 @@ def generate_srt_translation(
     output_path: str,
     config: ModelConfigOpenAI,
     domain: Optional[str] = None,
-    delay: float = 0.5,
+    delay: float = 0.1,
     window_size: int = 20
 ) -> None:
     """完整的SRT翻译工作流"""
@@ -255,7 +251,7 @@ def re_translate_failed_blocks(
     output_path: str,
     config: ModelConfigOpenAI,
     domain: Optional[str] = None,
-    delay: float = 0.5,
+    delay: float = 0.1,
     window_size: int = 20
 ) -> None:
     """重新翻译失败的字幕块"""
@@ -289,17 +285,23 @@ def re_translate_failed_blocks(
 
 
 if __name__ == "__main__":
-    # 初始化配置
+    # split long subtitle blocks
+    raw_blocks = parse_srt("acis2507\en_raw.srt")
+    split_blocks = split_long_subtitle_blocks(raw_blocks, max_length=15)
+    save_srt("acis2507\en.srt", split_blocks)
 
-    # model_config = ModelConfig(
-    #     api_key="your_api_key",  # 请填写自己的API Key
+    # # 初始化配置
+
+    # model_config = ModelConfigOpenAI(
+    #     api_url="https://ark.cn-beijing.volces.com/api/v3",
+    #     api_key="x",  # 请填写自己的API Key
     #     # model_id="Pro/deepseek-ai/DeepSeek-R1"  # 选择指定模型[^1]
-    #     model_id="deepseek-ai/DeepSeek-R1-Distill-Llama-70B"  # 选择指定模型[^1]
+    #     model_id="doubao-pro-32k-241215"  # 选择指定模型[^1]
     # )
 
     model_config = ModelConfigOllama(
-        api_url="http://192.168.31.108:11434",
-        model_id="deepseek-r1:32b",
+        api_url="x",
+        model_id="qwq:32b",
         num_ctx=4096,
         temperature=0.3,
         top_p=0.9,
@@ -309,21 +311,37 @@ if __name__ == "__main__":
     
     # 执行翻译流程
     generate_srt_translation(
-        input_path="acis2508\en.srt",
-        output_path="acis2508\ch_rough.srt",
+        input_path="acis2507\en.srt",
+        output_path="acis2507\ch_rough_db.srt",
         config=model_config,
         domain="民用航空",
-        delay=0.1,
+        delay=0.0,
         window_size=5
     )
 
     # 重新翻译失败的字幕块
     re_translate_failed_blocks(
-        rough_path="acis2508\ch_rough.srt",
-        source_path="acis2508\ch_rough.srt",
-        output_path="acis2508\ch.srt",
+        rough_path="acis2507\ch_rough_db.srt",
+        source_path="acis2507\en.srt",
+        output_path="acis2507\ch_db.srt",
         config=model_config,
         domain="民用航空",
-        delay=0.1,
+        delay=0.0,
         window_size=5
     )
+    # merge subtitles
+    merge_subtitles("acis2507\ch_db.srt", "acis2507\en.srt", "acis2507\merged.srt")
+
+    cmd_merge = CMD_FFMPEG_MERGE_TEMPLATE.format(
+        input_path_video="acis2507/acis2507.mp4",
+        input_path_srt="acis2507/merged.srt",
+        output_path_video="acis2507/acis2507_ch_en.mp4"
+    )
+    print(cmd_merge)
+
+    cmd_split = CMD_FFMPEG_SPLIT_TEMPLATE.format(
+        input_path_video="acis2507/acis2507_ch_en.mp4",
+        output_dir="acis2507/"
+    )
+    print(cmd_split)
+    print("All done!")
